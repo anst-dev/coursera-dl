@@ -145,21 +145,28 @@ def list_courses(args):
         logging.info(course)
 
 
-def download_on_demand_class(session, args, class_name):
+def download_on_demand_class(session, args, class_name, display_class_name=None):
     """
     Download all requested resources from the on-demand class given
     in class_name.
 
+    @param class_name: The actual course slug for API calls
+    @param display_class_name: Optional display name for folder structure.
+                               If None, uses class_name.
     @return: Tuple of (bool, bool), where the first bool indicates whether
         errors occurred while parsing syllabus, the second bool indicates
         whether the course appears to be completed.
     @rtype: (bool, bool)
     """
+    if display_class_name is None:
+        display_class_name = class_name
 
     error_occurred = False
     extractor = CourseraExtractor(session)
 
-    cached_syllabus_filename = os.path.join(class_name, class_name+'-syllabus-parsed.json')
+    # Cache syllabus in the download path
+    cache_dir = os.path.join(args.path, display_class_name) if args.path else display_class_name
+    cached_syllabus_filename = os.path.join(cache_dir, display_class_name+'-syllabus-parsed.json')
     if args.cache_syllabus and os.path.isfile(cached_syllabus_filename):
         modules = slurp_json(cached_syllabus_filename)
     else:
@@ -194,7 +201,7 @@ def download_on_demand_class(session, args, class_name):
     course_downloader = CourseraDownloader(
         downloader_wrapper,
         commandline_args=args,
-        class_name=class_name,
+        class_name=display_class_name,
         path=args.path,
         ignored_formats=ignored_formats,
         disable_url_skipping=args.disable_url_skipping
@@ -205,14 +212,16 @@ def download_on_demand_class(session, args, class_name):
     # Print skipped URLs if any
     if course_downloader.skipped_urls:
         print_skipped_urls(course_downloader.skipped_urls)
-        fp = os.path.join(class_name, "skipped_urls.json")
+        url_dir = os.path.join(args.path, display_class_name) if args.path else display_class_name
+        fp = os.path.join(url_dir, "skipped_urls.json")
         write_urls_to_file(course_downloader.skipped_urls, fp)
 
     # Print failed URLs if any
     # FIXME: should we set non-zero exit code if we have failed URLs?
     if course_downloader.failed_urls:
         print_failed_urls(course_downloader.failed_urls)
-        fp = os.path.join(class_name, "failed_urls.json")
+        url_dir = os.path.join(args.path, display_class_name) if args.path else display_class_name
+        fp = os.path.join(url_dir, "failed_urls.json")
         write_urls_to_file(course_downloader.failed_urls, fp)
 
     return error_occurred, completed
@@ -242,17 +251,20 @@ def print_failed_urls(failed_urls):
     logging.info('-' * 80)
 
 
-def download_class(session, args, class_name):
+def download_class(session, args, class_name, display_class_name=None):
     """
     Try to download on-demand class.
 
+    @param class_name: The actual course slug for API calls
+    @param display_class_name: Optional display name for folder structure.
+                               If None, uses class_name.
     @return: Tuple of (bool, bool), where the first bool indicates whether
         errors occurred while parsing syllabus, the second bool indicates
         whether the course appears to be completed.
     @rtype: (bool, bool)
     """
     logging.debug('Downloading new style (on demand) class %s', class_name)
-    return download_on_demand_class(session, args, class_name)
+    return download_on_demand_class(session, args, class_name, display_class_name)
 
 
 def main():
@@ -275,37 +287,83 @@ def main():
 
     session = create_session(args)
 
+    # Track specialization info for folder creation and course numbering
+    specialization_courses = {}  # Maps specialization_name -> list of (index, course_name)
+    course_info = []  # List of (specialization_name or None, course_name)
+    
     if args.specialization:
-        args.class_names = expand_specializations(session, args.class_names)
+        course_info = expand_specializations(session, args.class_names)
+        # Group courses by specialization for numbering
+        for spec_name, course_name in course_info:
+            if spec_name:
+                if spec_name not in specialization_courses:
+                    specialization_courses[spec_name] = []
+                specialization_courses[spec_name].append(course_name)
+    else:
+        # Regular courses: no specialization
+        for class_name in args.class_names:
+            course_info.append((None, class_name))
 
-    for class_index, class_name in enumerate(args.class_names):
+    # Process each course
+    for course_index, (spec_name, course_name) in enumerate(course_info):
+        original_path = args.path  # Store original path before try block
         try:
-            logging.info('Downloading class: %s (%d / %d)',
-                         class_name, class_index + 1, len(args.class_names))
-            error_occurred, completed = download_class(
-                session, args, class_name)
+            # Determine the path and course name to use
+            display_course_name = course_name
+            
+            # If this course belongs to a specialization, create folder and number it
+            if spec_name:
+                # Get the index of this course within its specialization
+                spec_courses = specialization_courses[spec_name]
+                course_num = spec_courses.index(course_name) + 1
+                numbered_course_name = "%02d_%s" % (course_num, course_name)
+                
+                # Create specialization folder path
+                spec_folder = os.path.join(original_path, spec_name)
+                args.path = spec_folder
+                display_course_name = numbered_course_name
+                
+                logging.info(
+                    'Downloading specialization "%s" course: %s (%d / %d)',
+                    spec_name,
+                    course_name,
+                    course_num,
+                    len(spec_courses),
+                )
+            else:
+                args.path = original_path
+                logging.info("Downloading class: %s (%d / %d)", course_name, course_index + 1, len(course_info))
+            
+            # Download the course: use real slug for API calls, numbered name for folders
+            error_occurred, completed = download_class(session, args, course_name, display_course_name)
+            
             if completed:
-                completed_classes.append(class_name)
+                completed_classes.append(course_name)
             if error_occurred:
-                classes_with_errors.append(class_name)
+                classes_with_errors.append(course_name)
         except requests.exceptions.HTTPError as e:
-            logging.error('HTTPError %s', e)
+            logging.error("HTTPError %s", e)
             if is_debug_run():
-                logging.exception('HTTPError %s', e)
+                logging.exception("HTTPError %s", e)
         except requests.exceptions.SSLError as e:
-            logging.error('SSLError %s', e)
+            logging.error("SSLError %s", e)
             print_ssl_error_message(e)
             if is_debug_run():
                 raise
         except ClassNotFound as e:
-            logging.error('Could not find class: %s', e)
+            logging.error("Could not find class: %s", e)
         except AuthenticationFailed as e:
-            logging.error('Could not authenticate: %s', e)
+            logging.error("Could not authenticate: %s", e)
+        finally:
+            # Always restore original path for next iteration, even if exception occurred
+            args.path = original_path
 
-        if class_index + 1 != len(args.class_names):
-            logging.info('Sleeping for %d seconds before downloading next course. '
-                         'You can change this with --download-delay option.',
-                         args.download_delay)
+        if course_index + 1 != len(course_info):
+            logging.info(
+                "Sleeping for %d seconds before downloading next course. "
+                "You can change this with --download-delay option.",
+                args.download_delay,
+            )
             time.sleep(args.download_delay)
 
     if completed_classes:

@@ -531,14 +531,19 @@ def expand_specializations(session, class_names):
 
     If it's a specialization, expand the list of class names with the child
     class names.
+
+    Returns a list of tuples: (specialization_name or None, course_name)
+    where specialization_name is the original specialization name if the
+    course came from a specialization, or None if it's a regular course.
     """
     result = []
     for class_name in class_names:
         specialization = SpecializationV1.create(session, class_name)
         if specialization is None:
-            result.append(class_name)
+            result.append((None, class_name))
         else:
-            result.extend(specialization.children)
+            for course_name in specialization.children:
+                result.append((class_name, course_name))
             logging.info(
                 'Expanded specialization "%s" into the following classes: %s',
                 class_name,
@@ -558,11 +563,22 @@ class SpecializationV1(object):
             dom = get_page(
                 session, OPENCOURSE_ONDEMAND_SPECIALIZATIONS_V1, json=True, quiet=True, class_name=class_name
             )
+
         except requests.exceptions.HTTPError as e:
             logging.debug("Could not expand %s: %s", class_name, e)
             return None
 
-        return SpecializationV1([course["slug"] for course in dom["linked"]["courses.v1"]])
+        # Get the ordered list of course IDs from elements
+        if "elements" in dom and len(dom["elements"]) > 0:
+            all_course_ids = dom["elements"][0].get("courseIds", [])
+            # Map course IDs to slugs from linked data
+            courses_dict = {course["id"]: course["slug"] for course in dom["linked"]["courses.v1"]}
+            # Return courses in the order specified by courseIds
+            course_slugs = [courses_dict[course_id] for course_id in all_course_ids if course_id in courses_dict]
+            return SpecializationV1(course_slugs)
+        else:
+            # Fallback to original behavior if elements structure is different
+            return SpecializationV1([course["slug"] for course in dom["linked"]["courses.v1"]])
 
 
 class CourseraOnDemand(object):
