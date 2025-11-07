@@ -5,38 +5,35 @@
 This module provides utility functions that are used within the script.
 """
 
+import datetime
+import errno
+import html
+import json
+import logging
 import os
+import random
 import re
+import string
 import sys
 import time
-import json
-import errno
-import random
-import string
-import logging
-import datetime
-
-
-from bs4 import BeautifulSoup as BeautifulSoup_
-from xml.sax.saxutils import unescape as sax_unescape
-
-import html
-from html.parser import HTMLParser
-from urllib.parse import ParseResult
-from urllib.parse import unquote_plus
-from urllib.parse import urlparse, urljoin
 from string import ascii_letters as string_ascii_letters
 from string import digits as string_digits
+from urllib.parse import ParseResult, unquote_plus, urljoin, urlparse
+from xml.sax.saxutils import unescape as sax_unescape
+
+from bs4 import BeautifulSoup as BeautifulSoup_
 
 from cs_dlp.libs.define import COURSERA_URL, WINDOWS_UNC_PREFIX
 
 # Force us of bs4 with html.parser
 
-def BeautifulSoup(page): return BeautifulSoup_(page, 'html.parser')
+
+def BeautifulSoup(page):
+    return BeautifulSoup_(page, "html.parser")
 
 
 def spit_json(obj, filename):
-    with open(filename, 'w') as file_object:
+    with open(filename, "w") as file_object:
         json.dump(obj, file_object, indent=4)
 
 
@@ -61,15 +58,12 @@ def random_string(length):
     """
     valid_chars = string_ascii_letters + string_digits
 
-    return ''.join(random.choice(valid_chars) for i in range(length))
+    return "".join(random.choice(valid_chars) for i in range(length))
 
 
 # Taken from: https://wiki.python.org/moin/EscapingHtml
 # escape() and unescape() takes care of &, < and >.
-HTML_ESCAPE_TABLE = {
-    '"': "&quot;",
-    "'": "&apos;"
-}
+HTML_ESCAPE_TABLE = {'"': "&quot;", "'": "&apos;"}
 
 HTML_UNESCAPE_TABLE = dict((v, k) for k, v in HTML_ESCAPE_TABLE.items())
 
@@ -96,31 +90,31 @@ def clean_filename(s, minimal_change=False):
     # Strip forbidden characters
     # https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247(v=vs.85).aspx
     s = (
-        s.replace(':', '-')
-        .replace('/', '-')
-        .replace('<', '-')
-        .replace('>', '-')
-        .replace('"', '-')
-        .replace('\\', '-')
-        .replace('|', '-')
-        .replace('?', '-')
-        .replace('*', '-')
-        .replace('\x00', '-')
-        .replace('\n', ' ')
+        s.replace(":", "-")
+        .replace("/", "-")
+        .replace("<", "-")
+        .replace(">", "-")
+        .replace('"', "-")
+        .replace("\\", "-")
+        .replace("|", "-")
+        .replace("?", "-")
+        .replace("*", "-")
+        .replace("\x00", "-")
+        .replace("\n", " ")
     )
 
     # Remove trailing dots and spaces; forbidden on Windows
-    s = s.rstrip(' .')
+    s = s.rstrip(" .")
 
     if minimal_change:
         return s
 
-    s = s.replace('(', '').replace(')', '')
-    s = s.rstrip('.')  # Remove excess of trailing dots
+    s = s.replace("(", "").replace(")", "")
+    s = s.rstrip(".")  # Remove excess of trailing dots
 
-    s = s.strip().replace(' ', '_')
-    valid_chars = '-_.()%s%s' % (string.ascii_letters, string.digits)
-    return ''.join(c for c in s if c in valid_chars)
+    s = s.strip().replace(" ", "_")
+    valid_chars = "-_.()%s%s" % (string.ascii_letters, string.digits)
+    return "".join(c for c in s if c in valid_chars)
 
 
 def normalize_path(path):
@@ -136,7 +130,7 @@ def normalize_path(path):
     @return: Normalized path.
     @rtype str
     """
-    if sys.platform != 'win32':
+    if sys.platform != "win32":
         return path
 
     if path.startswith(WINDOWS_UNC_PREFIX):
@@ -162,7 +156,11 @@ def mkdir_p(path, mode=0o777):
     """
 
     try:
-        os.makedirs(path, mode)
+        os.makedirs(
+            path,
+            mode,
+            exist_ok=True,
+        )
     except OSError as exc:
         if exc.errno == errno.EEXIST and os.path.isdir(path):
             pass
@@ -182,9 +180,7 @@ def clean_url(url):
     @rtype: str
     """
     parsed = urlparse(url.strip())
-    reconstructed = ParseResult(
-        parsed.scheme, parsed.netloc, parsed.path,
-        params='', query='', fragment='')
+    reconstructed = ParseResult(parsed.scheme, parsed.netloc, parsed.path, params="", query="", fragment="")
     return reconstructed.geturl()
 
 
@@ -230,8 +226,7 @@ def total_seconds(td):
 
     Added for backward compatibility, pre 2.7.
     """
-    return (td.microseconds +
-            (td.seconds + td.days * 24 * 3600) * 10 ** 6) // 10 ** 6
+    return (td.microseconds + (td.seconds + td.days * 24 * 3600) * 10**6) // 10**6
 
 
 def make_coursera_absolute_url(url):
